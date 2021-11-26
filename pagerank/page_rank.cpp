@@ -25,8 +25,72 @@ void pageRank(Graph g, double* solution, double damping, double convergence)
 
   int numNodes = num_nodes(g);
   double equal_prob = 1.0 / numNodes;
+  double* prev_sol = new double [numNodes];
+  
+  #pragma omp parallel for
   for (int i = 0; i < numNodes; ++i) {
     solution[i] = equal_prob;
+    prev_sol[i] = equal_prob;
+  }
+
+  #pragma omp barrier
+  int numIters = 0;
+  
+  bool converged = false;
+  while( !converged ){
+      
+      double outgoing_sum = 0;
+#pragma omp parallel for reduction(+: outgoing_sum)
+      for(int i = 0; i < numNodes; i++){
+          if(outgoing_size(g, i) == 0) outgoing_sum += damping*prev_sol[i]/numNodes;
+          else outgoing_sum += 0;
+      }
+      #pragma omp barrier
+      
+      #pragma omp parallel for
+      for(int i = 0; i < numNodes; i++){
+          double  sum = 0;
+          const Vertex* Start = incoming_begin(g, i);
+          const Vertex* End = incoming_end(g, i);
+          for(const Vertex* v = Start; v != End; v++){
+              sum +=  (prev_sol[*v]/ outgoing_size(g, *v) );
+          }
+          solution[i] = (sum*damping) + (1.0 - damping)/numNodes;
+          sum = 0;
+          
+          /* #pragma omp parallel for reduction(+:sum)
+          for(int j = 0; j < numNodes; j++){
+              if (outgoing_size(g, j) == 0) sum = (damping*prev_sol[j]/numNodes);
+          } 
+          */
+          solution[i] += outgoing_sum;
+          
+      }
+      #pragma omp barrier
+      
+      double* temp = prev_sol;
+      prev_sol = solution;
+      solution = temp;
+      
+      
+      double global_diff = 0;
+      
+#pragma omp parallel for reduction(+: global_diff)
+              for(int i = 0; i < numNodes; i++){
+                  global_diff += abs(solution[i] - prev_sol[i]);
+              }
+          converged = global_diff <= convergence;
+          numIters++;
+          
+          if(converged && numIters % 2 == 0){
+              #pragma omp parallel for
+              for(int i = 0; i < numNodes; i++){
+                  solution[i] = prev_sol[i];
+              }
+              delete [] prev_sol;
+          }
+          else if(converged)  delete [] solution;
+      
   }
   
   
