@@ -16,6 +16,7 @@
 #define FRONTIER_TOP_BFS_THRESHOLD 700000
 #define TOP_BFS true
 #define DOWN_BFS false
+#define MAX_FRONTIER_NODES_FOUND 1000
 
 void vertex_set_clear(vertex_set* list) {
     list->count = 0;
@@ -72,16 +73,20 @@ void bfs_top_down(Graph graph, solution* sol) {
 
     vertex_set* frontier = &list1;
     vertex_set* new_frontier = &list2;
-
+    int** frontier_subarrays = new int*[graph->num_nodes];
     // initialize all nodes to NOT_VISITED
     #pragma omp parallel for
-    for (int i=0; i<graph->num_nodes; i++)
+    for (int i=0; i<graph->num_nodes; i++){
         sol->distances[i] = NOT_VISITED_MARKER;
+    }
 
     // setup frontier with the root node
     frontier->vertices[frontier->count++] = ROOT_NODE_ID;
     sol->distances[ROOT_NODE_ID] = 0;
 
+    int* frontier_subarray_counts = new int [graph->num_nodes];
+    int* frontier_partial_sums = new int [graph->num_nodes];
+    
     while (frontier->count != 0) {
 
 #ifdef VERBOSE
@@ -95,31 +100,64 @@ void bfs_top_down(Graph graph, solution* sol) {
         int end_edge = (node == graph->num_nodes - 1)
                            ? graph->num_edges
                            : graph->outgoing_starts[node + 1];
-
-
+        int local_frontier_count = 0;
+        int local_frontier[end_edge - start_edge];;
+        
+        //frontier_subarrays[i] =  local_frontier;
+        
             for(int i = start_edge; i < end_edge; i++){
                 int outgoing_edge = graph->outgoing_edges[i];
                 
 
                 if( sol->distances[outgoing_edge] == NOT_VISITED_MARKER){
-                    if ( __sync_bool_compare_and_swap( & (sol->distances[outgoing_edge]), NOT_VISITED_MARKER, (sol->distances[node]) + 1)){
-                        int index = 0;
+                    
+                    //if(__sync_bool_compare_and_swap(& sol->distances[outgoing_edge], NOT_VISITED_MARKER, sol->distances[node] + 1)){
+                    sol->distances[outgoing_edge] = sol->distances[node] + 1;
+                        local_frontier[local_frontier_count++] = outgoing_edge;
+               
+                /*
+                while(!__sync_bool_compare_and_swap(&(new_frontier->count), index, index+1)){
+                    index = new_frontier->count;
+                }*/
                         
-                        #pragma omp atomic capture
                         
-                        {
-                            index = new_frontier->count;
-                            new_frontier->count++;
-                        }
+                //new_frontier->vertices[index] = outgoing_edge;
+                        //}
                         
-                        new_frontier->vertices[index] = outgoing_edge;
-                        
-                    }
+                        //}
                 }
+            }
+            int start_i = __sync_fetch_and_add(&new_frontier->count, local_frontier_count);
+            int end_i = start_i + local_frontier_count;
+            memcpy(new_frontier->vertices + start_i, local_frontier, local_frontier_count * sizeof(int));
+            //free(local_frontier);
             
-     }
         }
+        //frontier_subarray_counts[i] = local_frontier_count;
+            
+    
         
+    /*int sum = 0;
+#pragma parallel for reduction(+:sum)
+        for(int i =0; i < frontier->count; i++){
+            frontier_partial_sums[i] = sum;
+#pragma omp scan exclusive(sum)
+            sum += frontier_subarray_counts[i];
+        }
+        new_frontier->count = frontier_partial_sums[frontier->count -1] + frontier_subarray_counts[frontier->count-1];
+        
+#pragma omp parallel for schedule(guided)
+        for(int i = 0; i < frontier->count; i++){
+            int start_i = frontier_partial_sums[i];
+            int end_i = i == frontier->count - 1? new_frontier->count : frontier_partial_sums[i+1];
+            
+
+            for(int j = start_i, ii = 0; j < end_i; j++, ii++){
+                new_frontier->vertices[j] = frontier_subarrays[i][ii];
+            }
+            delete [] frontier_subarrays[i];
+        }
+    */        
         vertex_set*  temp = new_frontier;
             new_frontier = frontier;
             frontier = temp;
