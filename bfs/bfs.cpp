@@ -16,6 +16,8 @@
 #define FRONTIER_TOP_BFS_THRESHOLD 700000
 #define TOP_BFS true
 #define DOWN_BFS false
+#define MAX_LOCAL_FRONTIER_SIZE 10000
+#define MAX_NUM_THREADS 32
 #define MAX_FRONTIER_NODES_FOUND 1000
 
 void vertex_set_clear(vertex_set* list) {
@@ -73,6 +75,17 @@ void bfs_top_down(Graph graph, solution* sol) {
 
     vertex_set* frontier = &list1;
     vertex_set* new_frontier = &list2;
+    vertex_set*  local_buffers[MAX_NUM_THREADS];
+    
+    #pragma omp parallel for
+    for(int i = 0; i < MAX_NUM_THREADS; i++){
+      local_buffers[i] = (vertex_set*) malloc(sizeof(vertex_set));
+      vertex_set_init(local_buffers[i], graph->num_nodes);
+    }
+    
+    //try {if(local_buffers == nullptr) throw "error malloc failed!";}
+    //catch(const char* s){printf(s); return;}
+				   
     // int** frontier_subarrays = new int*[graph->num_nodes];
     // initialize all nodes to NOT_VISITED
     #pragma omp parallel for
@@ -100,20 +113,29 @@ void bfs_top_down(Graph graph, solution* sol) {
         int end_edge = (node == graph->num_nodes - 1)
                            ? graph->num_edges
                            : graph->outgoing_starts[node + 1];
-        int local_frontier_count = 0;
-        int local_frontier[end_edge - start_edge];;
+        //int local_frontier_count = local_buffers[omp_get_thread_num()]->count;
+        //int* local_frontier = local_buffers + i*MAX_LOCAL_FRONTIER_SIZE;
+	int thread_id = omp_get_thread_num();
+	
+	int* local_frontier = local_buffers[thread_id]->vertices;
         
         //frontier_subarrays[i] =  local_frontier;
         
-            for(int i = start_edge; i < end_edge; i++){
-                int outgoing_edge = graph->outgoing_edges[i];
+            for(int ii = start_edge; ii < end_edge; ii++){
+                int outgoing_edge = graph->outgoing_edges[ii];
                 
 
                 if( sol->distances[outgoing_edge] == NOT_VISITED_MARKER){
                     
-                    //if(__sync_bool_compare_and_swap(& sol->distances[outgoing_edge], NOT_VISITED_MARKER, sol->distances[node] + 1)){
-		  if( __sync_bool_compare_and_swap(& sol->distances[outgoing_edge], NOT_VISITED_MARKER,   sol->distances[node] + 1));
-                        local_frontier[local_frontier_count++] = outgoing_edge;
+		  //if(__sync_bool_compare_and_swap(& sol->distances[outgoing_edge], NOT_VISITED_MARKER, sol->distances[node] + 1)){
+		  // if( __sync_bool_compare_and_swap(& sol->distances[outgoing_edge], NOT_VISITED_MARKER,   sol->distances[node] + 1));
+		  sol->distances[outgoing_edge] = sol->distances[node] + 1;
+		  
+		  //if(local_frontier_count + i*MAX_LOCAL_FRONTIER_SIZE  >=  graph->num_nodes * MAX_LOCAL_FRONTIER_SIZE - 1) printf("buffer not big enough!");
+		  local_frontier[local_buffers[thread_id]->count++] = outgoing_edge;
+		  
+		  //if(local_buffers[omp_get_thread_num()] -> count >= graph->num_nodes) printf("Error! Buffer not large enough!");
+		  //}
                
                 /*
                 while(!__sync_bool_compare_and_swap(&(new_frontier->count), index, index+1)){
@@ -125,14 +147,22 @@ void bfs_top_down(Graph graph, solution* sol) {
                         //}
                         
                         //}
-                }
+		}
             }
-            int start_i = __sync_fetch_and_add(&new_frontier->count, local_frontier_count);
-            int end_i = start_i + local_frontier_count;
-            memcpy(new_frontier->vertices + start_i, local_frontier, local_frontier_count * sizeof(int));
+	    // int start_i = __sync_fetch_and_add(&new_frontier->count, local_frontier_count);
+            
+	    // memmove(new_frontier->vertices + start_i, local_frontier, local_frontier_count * sizeof(int));
             //free(local_frontier);
             
         }
+	#pragma omp barrier
+	
+	#pragma omp parallel for
+	for(int i = 0; i < MAX_NUM_THREADS; i++){
+	  int start_i = __sync_fetch_and_add(&new_frontier->count, local_buffers[i]->count);
+	  memcpy(new_frontier->vertices + start_i, local_buffers[i]->vertices, local_buffers[i]->count * sizeof(int));
+	  vertex_set_clear(local_buffers[i]);
+	}
         //frontier_subarray_counts[i] = local_frontier_count;
             
     
@@ -172,6 +202,11 @@ void bfs_top_down(Graph graph, solution* sol) {
 #endif
 
     }
+    #pragma parallel for
+    for(int i = 0; i < MAX_NUM_THREADS; i++){
+      free(local_buffers[i]);
+    }
+    //free(local_buffers);
 }
 
 
